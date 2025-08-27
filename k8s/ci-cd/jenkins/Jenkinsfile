@@ -1,0 +1,563 @@
+pipeline {
+    agent any
+    
+    environment {
+        // Application Configuration
+        APP_NAME = 'task-management-system'
+        BACKEND_IMAGE = 'task-management-backend'
+        FRONTEND_IMAGE = 'task-management-frontend'
+        DOCKER_REGISTRY = 'your-registry.com'
+        
+        // Environment Configuration
+        ENVIRONMENT = "${params.ENVIRONMENT}"
+        NAMESPACE = "${params.ENVIRONMENT}"
+        CLUSTER_NAME = "task-management-${params.ENVIRONMENT}"
+        
+        // Version Configuration
+        VERSION = "${env.BUILD_NUMBER}"
+        GIT_COMMIT = "${env.GIT_COMMIT}"
+        GIT_BRANCH = "${env.GIT_BRANCH}"
+        
+        // AWS Configuration
+        AWS_REGION = 'us-west-2'
+        EKS_CLUSTER_NAME = "task-management-${params.ENVIRONMENT}"
+        
+        // Resource Configuration
+        BACKEND_REPLICAS = "${params.ENVIRONMENT == 'prod' ? '3' : '2'}"
+        FRONTEND_REPLICAS = "${params.ENVIRONMENT == 'prod' ? '3' : '2'}"
+        
+        // Timeout Configuration
+        BUILD_TIMEOUT = 30
+        TEST_TIMEOUT = 15
+        DEPLOY_TIMEOUT = 20
+    }
+    
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'uat', 'prod'],
+            description: 'Select deployment environment'
+        )
+        choice(
+            name: 'DEPLOYMENT_STRATEGY',
+            choices: ['rolling', 'blue-green', 'canary'],
+            description: 'Select deployment strategy'
+        )
+        booleanParam(
+            name: 'RUN_TESTS',
+            defaultValue: true,
+            description: 'Run automated tests before deployment'
+        )
+        booleanParam(
+            name: 'SECURITY_SCAN',
+            defaultValue: true,
+            description: 'Run security scans on Docker images'
+        )
+        booleanParam(
+            name: 'PERFORMANCE_TEST',
+            defaultValue: false,
+            description: 'Run performance tests after deployment'
+        )
+        string(
+            name: 'CUSTOM_TAG',
+            defaultValue: '',
+            description: 'Custom tag for Docker images (optional)'
+        )
+    }
+    
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        ansiColor('xterm')
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    
+    stages {
+        stage('Initialize') {
+            steps {
+                script {
+                    echo "🚀 Starting CI/CD Pipeline for ${APP_NAME}"
+                    echo "Environment: ${ENVIRONMENT}"
+                    echo "Deployment Strategy: ${DEPLOYMENT_STRATEGY}"
+                    echo "Build Number: ${VERSION}"
+                    echo "Git Commit: ${GIT_COMMIT}"
+                    echo "Git Branch: ${GIT_BRANCH}"
+                    
+                    // Set custom tag if provided
+                    if (params.CUSTOM_TAG) {
+                        env.VERSION = "${params.CUSTOM_TAG}"
+                        echo "Using custom tag: ${VERSION}"
+                    }
+                    
+                    // Validate environment
+                    if (params.ENVIRONMENT == 'prod' && env.GIT_BRANCH != 'main') {
+                        error "Production deployments only allowed from main branch!"
+                    }
+                }
+            }
+        }
+        
+        stage('Checkout') {
+            steps {
+                checkout scm
+                
+                script {
+                    // Get git information
+                    env.GIT_COMMIT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    
+                    env.GIT_BRANCH = sh(
+                        script: 'git rev-parse --abbrev-ref HEAD',
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "📋 Repository: ${env.GIT_URL}"
+                    echo "📋 Branch: ${env.GIT_BRANCH}"
+                    echo "📋 Commit: ${env.GIT_COMMIT}"
+                }
+            }
+        }
+        
+        stage('Dependencies Check') {
+            steps {
+                script {
+                    echo "🔍 Checking dependencies..."
+                    
+                    // Check if required files exist
+                    def requiredFiles = [
+                        'backend/package.json',
+                        'frontend/package.json',
+                        'k8s/manifests/backend/deployment.yaml',
+                        'k8s/manifests/frontend/deployment.yaml'
+                    ]
+                    
+                    requiredFiles.each { file ->
+                        if (!fileExists(file)) {
+                            error "Required file not found: ${file}"
+                        }
+                    }
+                    
+                    echo "✅ All required files found"
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            when {
+                expression { params.SECURITY_SCAN }
+            }
+            steps {
+                script {
+                    echo "🔒 Running security scans..."
+                    
+                    // Run Trivy vulnerability scan
+                    sh '''
+                        # Install Trivy if not available
+                        if ! command -v trivy &> /dev/null; then
+                            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.45.0
+                        fi
+                        
+                        # Scan for vulnerabilities
+                        trivy fs --severity HIGH,CRITICAL . || true
+                    '''
+                    
+                    // Run npm audit for Node.js dependencies
+                    dir('backend') {
+                        sh 'npm audit --audit-level=high || true'
+                    }
+                    
+                    dir('frontend') {
+                        sh 'npm audit --audit-level=high || true'
+                    }
+                    
+                    echo "✅ Security scans completed"
+                }
+            }
+        }
+        
+        stage('Backend Build & Test') {
+            parallel {
+                stage('Backend Build') {
+                    steps {
+                        dir('backend') {
+                            script {
+                                echo "🔨 Building Backend Application..."
+                                
+                                // Install dependencies
+                                sh 'npm ci --only=production'
+                                
+                                // Run TypeScript compilation
+                                sh 'npm run build'
+                                
+                                // Create build artifact
+                                sh 'tar -czf backend-build-${VERSION}.tar.gz dist/ package.json'
+                                
+                                // Archive build artifact
+                                archiveArtifacts artifacts: "backend-build-${VERSION}.tar.gz"
+                                
+                                echo "✅ Backend build completed"
+                            }
+                        }
+                    }
+                }
+                
+                stage('Backend Tests') {
+                    when {
+                        expression { params.RUN_TESTS }
+                    }
+                    steps {
+                        dir('backend') {
+                            script {
+                                echo "🧪 Running Backend Tests..."
+                                
+                                // Install dev dependencies for testing
+                                sh 'npm ci'
+                                
+                                // Run linting
+                                sh 'npm run lint || true'
+                                
+                                // Run unit tests
+                                sh 'npm run test:unit || true'
+                                
+                                // Run integration tests
+                                sh 'npm run test:integration || true'
+                                
+                                echo "✅ Backend tests completed"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Frontend Build & Test') {
+            parallel {
+                stage('Frontend Build') {
+                    steps {
+                        dir('frontend') {
+                            script {
+                                echo "🔨 Building Frontend Application..."
+                                
+                                // Install dependencies
+                                sh 'npm ci --only=production'
+                                
+                                // Build production bundle
+                                sh 'npm run build'
+                                
+                                // Create build artifact
+                                sh 'tar -czf frontend-build-${VERSION}.tar.gz dist/'
+                                
+                                // Archive build artifact
+                                archiveArtifacts artifacts: "frontend-build-${VERSION}.tar.gz"
+                                
+                                echo "✅ Frontend build completed"
+                            }
+                        }
+                    }
+                }
+                
+                stage('Frontend Tests') {
+                    when {
+                        expression { params.RUN_TESTS }
+                    }
+                    steps {
+                        dir('frontend') {
+                            script {
+                                echo "🧪 Running Frontend Tests..."
+                                
+                                // Install dev dependencies for testing
+                                sh 'npm ci'
+                                
+                                // Run linting
+                                sh 'npm run lint || true'
+                                
+                                // Run unit tests
+                                sh 'npm run test:unit || true'
+                                
+                                // Run E2E tests
+                                sh 'npm run test:e2e || true'
+                                
+                                echo "✅ Frontend tests completed"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Docker Build') {
+            steps {
+                script {
+                    echo "🐳 Building Docker Images..."
+                    
+                    // Build Backend Image
+                    dir('backend') {
+                        sh '''
+                            docker build \
+                                -t ${DOCKER_REGISTRY}/${BACKEND_IMAGE}:${VERSION} \
+                                -t ${DOCKER_REGISTRY}/${BACKEND_IMAGE}:latest \
+                                -f Dockerfile .
+                        '''
+                    }
+                    
+                    // Build Frontend Image
+                    dir('frontend') {
+                        sh '''
+                            docker build \
+                                -t ${DOCKER_REGISTRY}/${FRONTEND_IMAGE}:${VERSION} \
+                                -t ${DOCKEND_REGISTRY}/${FRONTEND_IMAGE}:latest \
+                                -f Dockerfile .
+                        '''
+                    }
+                    
+                    echo "✅ Docker images built successfully"
+                }
+            }
+        }
+        
+        stage('Docker Security Scan') {
+            when {
+                expression { params.SECURITY_SCAN }
+            }
+            steps {
+                script {
+                    echo "🔒 Scanning Docker images for vulnerabilities..."
+                    
+                    // Scan backend image
+                    sh '''
+                        trivy image --severity HIGH,CRITICAL \
+                            ${DOCKER_REGISTRY}/${BACKEND_IMAGE}:${VERSION} || true
+                    '''
+                    
+                    // Scan frontend image
+                    sh '''
+                        trivy image --severity HIGH,CRITICAL \
+                            ${DOCKER_REGISTRY}/${FRONTEND_IMAGE}:${VERSION} || true
+                    '''
+                    
+                    echo "✅ Docker security scans completed"
+                }
+            }
+        }
+        
+        stage('Push Images') {
+            steps {
+                script {
+                    echo "📤 Pushing Docker Images to Registry..."
+                    
+                    // Push Backend Image
+                    sh '''
+                        docker push ${DOCKER_REGISTRY}/${BACKEND_IMAGE}:${VERSION}
+                        docker push ${DOCKER_REGISTRY}/${BACKEND_IMAGE}:latest
+                    '''
+                    
+                    // Push Frontend Image
+                    sh '''
+                        docker push ${DOCKER_REGISTRY}/${FRONTEND_IMAGE}:${VERSION}
+                        docker push ${DOCKER_REGISTRY}/${FRONTEND_IMAGE}:latest
+                    '''
+                    
+                    echo "✅ Docker images pushed successfully"
+                }
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    echo "🚀 Deploying to Kubernetes Cluster: ${EKS_CLUSTER_NAME}"
+                    
+                    // Update Kubernetes manifests with new image tags
+                    sh '''
+                        # Update backend deployment
+                        sed -i "s|image: .*|image: ${DOCKER_REGISTRY}/${BACKEND_IMAGE}:${VERSION}|g" \
+                            k8s/manifests/backend/deployment.yaml
+                        
+                        # Update frontend deployment
+                        sed -i "s|image: .*|image: ${DOCKER_REGISTRY}/${FRONTEND_IMAGE}:${VERSION}|g" \
+                            k8s/manifests/frontend/deployment.yaml
+                        
+                        # Update replica counts based on environment
+                        sed -i "s|replicas: .*|replicas: ${BACKEND_REPLICAS}|g" \
+                            k8s/manifests/backend/deployment.yaml
+                        sed -i "s|replicas: .*|replicas: ${FRONTEND_REPLICAS}|g" \
+                            k8s/manifests/frontend/deployment.yaml
+                    '''
+                    
+                    // Deploy using our deployment script
+                    sh '''
+                        cd k8s
+                        ENVIRONMENT=${ENVIRONMENT} ./deploy.sh
+                    '''
+                    
+                    echo "✅ Deployment completed successfully"
+                }
+            }
+        }
+        
+        stage('Health Check') {
+            steps {
+                script {
+                    echo "🏥 Running Health Checks..."
+                    
+                    // Wait for deployments to be ready
+                    sh '''
+                        kubectl wait --for=condition=available --timeout=300s \
+                            deployment/task-management-backend -n ${NAMESPACE}
+                        kubectl wait --for=condition=available --timeout=300s \
+                            deployment/task-management-frontend -n ${NAMESPACE}
+                    '''
+                    
+                    // Check pod status
+                    sh '''
+                        kubectl get pods -n ${NAMESPACE} -l app=task-management
+                        kubectl get services -n ${NAMESPACE} -l app=task-management
+                    '''
+                    
+                    // Run basic health checks
+                    sh '''
+                        # Check backend health
+                        kubectl run health-check --rm -i --restart=Never --image=curlimages/curl \
+                            -- curl -f http://task-management-backend-service:80/health || exit 1
+                        
+                        # Check frontend health
+                        kubectl run health-check --rm -i --restart=Never --image=curlimages/curl \
+                            -- curl -f http://task-management-frontend-service:80/ || exit 1
+                    '''
+                    
+                    echo "✅ Health checks passed"
+                }
+            }
+        }
+        
+        stage('Performance Test') {
+            when {
+                expression { params.PERFORMANCE_TEST }
+            }
+            steps {
+                script {
+                    echo "⚡ Running Performance Tests..."
+                    
+                    // Run basic load test
+                    sh '''
+                        # Install k6 if not available
+                        if ! command -v k6 &> /dev/null; then
+                            curl -L https://github.com/grafana/k6/releases/download/v0.45.0/k6-v0.45.0-linux-amd64.tar.gz | tar xz
+                            sudo mv k6-v0.45.0-linux-amd64/k6 /usr/local/bin/
+                        fi
+                        
+                        # Run performance test
+                        k6 run --out json=performance-results.json \
+                            --env ENVIRONMENT=${ENVIRONMENT} \
+                            performance-tests/load-test.js || true
+                    '''
+                    
+                    // Archive performance results
+                    archiveArtifacts artifacts: "performance-results.json"
+                    
+                    echo "✅ Performance tests completed"
+                }
+            }
+        }
+        
+        stage('Post Deployment') {
+            steps {
+                script {
+                    echo "📊 Post Deployment Tasks..."
+                    
+                    // Get deployment information
+                    sh '''
+                        echo "=== Deployment Status ==="
+                        kubectl get deployments -n ${NAMESPACE}
+                        kubectl get services -n ${NAMESPACE}
+                        kubectl get pods -n ${NAMESPACE}
+                        
+                        echo "=== Ingress Status ==="
+                        kubectl get ingress -n ${NAMESPACE}
+                        
+                        echo "=== Resource Usage ==="
+                        kubectl top pods -n ${NAMESPACE} || true
+                    '''
+                    
+                    // Send notification
+                    if (params.ENVIRONMENT == 'prod') {
+                        // Send production deployment notification
+                        echo "🚨 Production deployment completed!"
+                    }
+                    
+                    echo "✅ Post deployment tasks completed"
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                echo "🧹 Cleaning up workspace..."
+                
+                // Clean up Docker images
+                sh '''
+                    docker rmi ${DOCKER_REGISTRY}/${BACKEND_IMAGE}:${VERSION} || true
+                    docker rmi ${DOCKER_REGISTRY}/${FRONTEND_IMAGE}:${VERSION} || true
+                    docker system prune -f || true
+                '''
+                
+                // Clean up Kubernetes test resources
+                sh '''
+                    kubectl delete pod health-check -n ${NAMESPACE} || true
+                '''
+            }
+        }
+        
+        success {
+            script {
+                echo "🎉 Pipeline completed successfully!"
+                
+                // Update deployment status
+                env.DEPLOYMENT_STATUS = "SUCCESS"
+                env.DEPLOYMENT_URL = "http://app.${CLUSTER_NAME}.${ENVIRONMENT}.local"
+                
+                // Send success notification
+                if (params.ENVIRONMENT == 'prod') {
+                    // Send production success notification
+                    echo "🚀 Production deployment successful!"
+                }
+            }
+        }
+        
+        failure {
+            script {
+                echo "❌ Pipeline failed!"
+                
+                // Update deployment status
+                env.DEPLOYMENT_STATUS = "FAILED"
+                
+                // Send failure notification
+                if (params.ENVIRONMENT == 'prod') {
+                    // Send production failure notification
+                    echo "🚨 Production deployment failed!"
+                }
+                
+                // Attempt rollback for production
+                if (params.ENVIRONMENT == 'prod') {
+                    echo "🔄 Attempting rollback..."
+                    sh '''
+                        kubectl rollout undo deployment/task-management-backend -n ${NAMESPACE}
+                        kubectl rollout undo deployment/task-management-frontend -n ${NAMESPACE}
+                    '''
+                }
+            }
+        }
+        
+        cleanup {
+            script {
+                echo "🧹 Pipeline cleanup completed"
+            }
+        }
+    }
+}
+

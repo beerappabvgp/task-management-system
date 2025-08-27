@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: task-management-quota
+  namespace: default
+  labels:
+    app: task-management
+    component: resource-quota
+    environment: dev
+spec:
+  hard:
+    # CPU limits
+    requests.cpu: "4"
+    limits.cpu: "8"
+    
+    # Memory limits
+    requests.memory: "8Gi"
+    limits.memory: "16Gi"
+    
+    # Storage limits
+    requests.storage: "100Gi"
+    limits.storage: "200Gi"
+    
+    # Ephemeral storage
+    requests.ephemeral-storage: "10Gi"
+    limits.ephemeral-storage: "20Gi"
+    
+    # Pod limits
+    pods: "20"
+    
+    # Service limits
+    services: "10"
+    
+    # Persistent volume claims
+    persistentvolumeclaims: "10"
+    
+    # Config maps
+    configmaps: "20"
+    
+    # Secrets
+    secrets: "20"
+    
+    # Services load balancers
+    services.loadbalancers: "2"
+    
+    # Services node ports
+    services.nodeports: "5"
+

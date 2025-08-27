@@ -1,0 +1,117 @@
+# ===============================
+# Node.js
+# ===============================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+.env
+.env.local
+.env.*.local
+
+# ===============================
+# Logs
+# ===============================
+logs/
+*.log
+*.log.*
+
+# ===============================
+# OS / System files
+# ===============================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===============================
+# IDEs / Editors
+# ===============================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.iml
+
+# ===============================
+# Docker
+# ===============================
+*.tar.gz
+docker-compose.override.yml
+.dockerignore
+Dockerfile.*
+
+# ===============================
+# Kubernetes / Helm
+# ===============================
+k8s/secrets.yaml
+k8s/configs/*.local
+*.kubeconfig
+*.yaml.backup
+helm/charts/
+helm/cache/
+helm/tmp/
+
+# ===============================
+# Build artifacts
+# ===============================
+dist/
+build/
+tmp/
+out/
+coverage/
+*.tsbuildinfo
+
+# ===============================
+# Test / Coverage
+# ===============================
+coverage/
+*.lcov
+
+# ===============================
+# Miscellaneous
+# ===============================
+*.bak
+*.swp
+*.swo
+*.tmp
+*.old
+*.orig
+*.rej
+
+# ===============================
+# JetBrains IDEs
+# ===============================
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# ===============================
+# VSCode
+# ===============================
+.vscode/
+.history/
+
+# ===============================
+# OS Temp Files
+# ===============================
+*.DS_Store
+*.AppleDouble
+*.LSOverride
+Icon?
+ehthumbs.db
+*.stackdump
+
+
+# Terraform local files
+.terraform/
+*.tfstate
+*.tfstate.backup
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl

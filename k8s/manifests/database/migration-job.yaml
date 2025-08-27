@@ -1,0 +1,196 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: task-management-db-migration
+  namespace: dev
+  labels:
+    app: task-management
+    component: database
+    environment: dev
+spec:
+  template:
+    metadata:
+      labels:
+        app: task-management
+        component: database
+        environment: dev
+    spec:
+      serviceAccountName: task-management-backend
+      containers:
+      - name: migration
+        image: task-management-backend:latest
+        command: ["npm"]
+        args: ["run", "db:migrate"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: task-management-backend-secrets
+              key: database-url
+        - name: NODE_ENV
+          value: "production"
+        - name: LOG_LEVEL
+          value: "info"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: config
+        configMap:
+          name: task-management-backend-config
+      restartPolicy: Never
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: task-management-db-backup
+  namespace: dev
+  labels:
+    app: task-management
+    component: database
+    environment: dev
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: task-management
+            component: database
+            environment: dev
+        spec:
+          serviceAccountName: task-management-backend
+          containers:
+          - name: backup
+            image: task-management-backend:latest
+            command: ["npm"]
+            args: ["run", "db:backup"]
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: task-management-backend-secrets
+                  key: database-url
+            - name: NODE_ENV
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: BACKUP_RETENTION_DAYS
+              value: "30"
+            - name: BACKUP_STORAGE_PATH
+              value: "/app/backups"
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "500m"
+              limits:
+                memory: "1Gi"
+                cpu: "1000m"
+            volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+            - name: config
+              mountPath: /app/config
+            - name: backup-storage
+              mountPath: /app/backups
+          volumes:
+          - name: logs
+            emptyDir: {}
+          - name: config
+            configMap:
+              name: task-management-backend-config
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: task-management-backup-pvc
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: task-management-backup-pvc
+  namespace: dev
+  labels:
+    app: task-management
+    component: database
+    environment: dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp2
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: task-management-db-seed
+  namespace: dev
+  labels:
+    app: task-management
+    component: database
+    environment: dev
+spec:
+  template:
+    metadata:
+      labels:
+        app: task-management
+        component: database
+        environment: dev
+    spec:
+      serviceAccountName: task-management-backend
+      containers:
+      - name: seed
+        image: task-management-backend:latest
+        command: ["npm"]
+        args: ["run", "db:seed"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: task-management-backend-secrets
+              key: database-url
+        - name: NODE_ENV
+          value: "production"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: SEED_ENVIRONMENT
+          value: "dev"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: config
+        configMap:
+          name: task-management-backend-config
+      restartPolicy: Never
+  backoffLimit: 3
+  activeDeadlineSeconds: 300

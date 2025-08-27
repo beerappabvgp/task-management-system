@@ -1,0 +1,106 @@
+groups:
+  - name: application.rules
+    rules:
+      # HTTP Response Rules
+      - alert: HighHTTPErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP error rate"
+          description: "HTTP error rate is above 5% for more than 5 minutes"
+
+      - alert: HighHTTPLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP latency"
+          description: "95th percentile HTTP latency is above 1 second for more than 5 minutes"
+
+      # Database Rules
+      - alert: HighDatabaseConnections
+        expr: database_connections_current / database_connections_max * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High database connection usage"
+          description: "Database connections are above 80% of maximum for more than 5 minutes"
+
+      - alert: DatabaseSlowQueries
+        expr: rate(database_slow_queries_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of slow database queries"
+          description: "More than 0.1 slow queries per second for more than 5 minutes"
+
+      # Cache Rules
+      - alert: LowCacheHitRate
+        expr: (cache_hits_total / (cache_hits_total + cache_misses_total)) * 100 < 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is below 80% for more than 5 minutes"
+
+      - alert: HighCacheMemoryUsage
+        expr: cache_memory_usage_bytes / cache_memory_max_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High cache memory usage"
+          description: "Cache memory usage is above 85% for more than 5 minutes"
+
+      # Application Health Rules
+      - alert: ApplicationDown
+        expr: up{job="task-management-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Application is down"
+          description: "Task Management application has been down for more than 1 minute"
+
+      - alert: ApplicationHighMemory
+        expr: (process_resident_memory_bytes / container_memory_usage_bytes) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Application high memory usage"
+          description: "Application memory usage is above 80% for more than 5 minutes"
+
+      - alert: ApplicationHighCPU
+        expr: rate(process_cpu_seconds_total[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Application high CPU usage"
+          description: "Application CPU usage is above 80% for more than 5 minutes"
+
+      # Queue Rules
+      - alert: HighQueueDepth
+        expr: kafka_consumer_lag_sum > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High queue depth"
+          description: "Kafka consumer lag is above 1000 messages for more than 5 minutes"
+
+      - alert: QueueProcessingSlow
+        expr: rate(kafka_consumer_records_consumed_total[5m]) < 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow queue processing"
+          description: "Queue processing rate is below 100 messages per second for more than 5 minutes"

@@ -1,0 +1,130 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job@1309.vd2294d3344a_f">
+  <description>Task Management System CI/CD Pipeline</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.plugins.disk__usage.DiskUsageProperty/>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>ENVIRONMENT</name>
+          <description>Select deployment environment</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>dev</string>
+              <string>uat</string>
+              <string>prod</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>DEPLOYMENT_STRATEGY</name>
+          <description>Select deployment strategy</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>rolling</string>
+              <string>blue-green</string>
+              <string>canary</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>RUN_TESTS</name>
+          <description>Run automated tests before deployment</description>
+          <defaultValue>true</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>SECURITY_SCAN</name>
+          <description>Run security scans on Docker images</description>
+          <defaultValue>true</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>PERFORMANCE_TEST</name>
+          <description>Run performance tests after deployment</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>CUSTOM_TAG</name>
+          <description>Custom tag for Docker images (optional)</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps@3697.vb_2c4b_1c8c638">
+    <script>pipeline {
+    agent any
+    
+    environment {
+        APP_NAME = 'task-management-system'
+        BACKEND_IMAGE = 'task-management-backend'
+        FRONTEND_IMAGE = 'task-management-frontend'
+        DOCKER_REGISTRY = 'your-registry.com'
+        ENVIRONMENT = "${params.ENVIRONMENT}"
+        NAMESPACE = "${params.ENVIRONMENT}"
+        VERSION = "${env.BUILD_NUMBER}"
+    }
+    
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'uat', 'prod'])
+        choice(name: 'DEPLOYMENT_STRATEGY', choices: ['rolling', 'blue-green', 'canary'])
+        booleanParam(name: 'RUN_TESTS', defaultValue: true)
+        booleanParam(name: 'SECURITY_SCAN', defaultValue: true)
+        booleanParam(name: 'PERFORMANCE_TEST', defaultValue: false)
+        string(name: 'CUSTOM_TAG', defaultValue: '')
+    }
+    
+    stages {
+        stage('Initialize') {
+            steps {
+                echo "Starting CI/CD Pipeline for ${APP_NAME}"
+            }
+        }
+        
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Build & Test') {
+            parallel {
+                stage('Backend') {
+                    steps {
+                        dir('backend') {
+                            sh 'npm ci && npm run build'
+                        }
+                    }
+                }
+                stage('Frontend') {
+                    steps {
+                        dir('frontend') {
+                            sh 'npm ci && npm run build'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                echo "Deploying to ${ENVIRONMENT}"
+                sh 'cd k8s && ENVIRONMENT=${ENVIRONMENT} ./deploy.sh'
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Pipeline completed successfully!"
+        }
+        failure {
+            echo "Pipeline failed!"
+        }
+    }
+}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

@@ -1,0 +1,92 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: task-management-ingress
+  namespace: default
+  labels:
+    app: task-management
+    component: ingress
+    environment: dev
+  annotations:
+    # AWS Load Balancer Controller annotations
+    kubernetes.io/ingress.class: "alb"
+    alb.ingress.kubernetes.io/scheme: "internet-facing"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-west-2:123456789012:certificate/example"
+    
+    # Health check annotations
+    alb.ingress.kubernetes.io/healthcheck-path: "/health"
+    alb.ingress.kubernetes.io/healthcheck-port: "3000"
+    alb.ingress.kubernetes.io/healthcheck-protocol: "HTTP"
+    alb.ingress.kubernetes.io/success-codes: "200,302"
+    
+    # Security annotations
+    alb.ingress.kubernetes.io/security-groups: "sg-example123"
+    alb.ingress.kubernetes.io/load-balancer-attributes: "deletion_protection.enabled=false"
+    
+    # Monitoring annotations
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "80"
+spec:
+  rules:
+  - host: "api.task-management-dev.dev.local"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: task-management-backend-service
+            port:
+              number: 80
+  - host: "app.task-management-dev.dev.local"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: task-management-frontend-service
+            port:
+              number: 80
+  - host: "monitoring.task-management-dev.dev.local"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-stack-grafana
+            port:
+              number: 80
+      - path: /prometheus
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-stack-kube-prometheus-prometheus
+            port:
+              number: 9090
+      - path: /elasticsearch
+        pathType: Prefix
+        backend:
+          service:
+            name: elasticsearch-master
+            port:
+              number: 9200
+      - path: /kibana
+        pathType: Prefix
+        backend:
+          service:
+            name: kibana-kibana
+            port:
+              number: 5601
+      - path: /jaeger
+        pathType: Prefix
+        backend:
+          service:
+            name: jaeger-query
+            port:
+              number: 16686
+

@@ -1,0 +1,114 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-management-network-policy
+  namespace: default
+  labels:
+    app: task-management
+    component: network-policy
+    environment: dev
+spec:
+  podSelector:
+    matchLabels:
+      app: task-management
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow frontend to communicate with backend
+  - from:
+    - podSelector:
+        matchLabels:
+          app: task-management-frontend
+    ports:
+    - protocol: TCP
+      port: 3000
+  # Allow monitoring tools to scrape metrics
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 3000
+      name: metrics
+  # Allow ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress
+    ports:
+    - protocol: TCP
+      port: 3000
+      name: http
+  egress:
+  # Allow DNS queries
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow HTTP/HTTPS to external services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+  # Allow communication to monitoring namespace
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9200
+      name: elasticsearch
+    - protocol: TCP
+      port: 5601
+      name: kibana
+    - protocol: TCP
+      port: 16686
+      name: jaeger
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-network-policy
+  namespace: default
+  labels:
+    app: task-management-frontend
+    component: network-policy
+    environment: dev
+spec:
+  podSelector:
+    matchLabels:
+      app: task-management-frontend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress
+    ports:
+    - protocol: TCP
+      port: 80
+      name: http
+  egress:
+  # Allow DNS queries
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow communication to backend
+  - to:
+    - podSelector:
+        matchLabels:
+          app: task-management-backend
+    ports:
+    - protocol: TCP
+      port: 3000
+      name: api
+
